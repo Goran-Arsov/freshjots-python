@@ -66,7 +66,7 @@ export FRESHJOTS_TOKEN=<your-token>
 Or pass explicitly:
 
 ```python
-Client(token="fjk_…")
+Client(token="mn_…")
 ```
 
 ## License
