@@ -15,14 +15,14 @@ def test_client_requires_a_token(monkeypatch):
 
 
 def test_client_accepts_explicit_token():
-    client = Client(token="fjk_test")
-    assert client.token == "fjk_test"
+    client = Client(token="mn_test")
+    assert client.token == "mn_test"
 
 
 def test_client_reads_token_from_env(monkeypatch):
-    monkeypatch.setenv("FRESHJOTS_TOKEN", "fjk_env")
+    monkeypatch.setenv("FRESHJOTS_TOKEN", "mn_env")
     client = Client()
-    assert client.token == "fjk_env"
+    assert client.token == "mn_env"
 
 
 def test_api_error_carries_code_and_status():
