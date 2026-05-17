@@ -7,9 +7,15 @@ Usage:
     client = Client()  # reads FRESHJOTS_TOKEN from the environment
     client.append("cron-jobs-prod", "backup ok")
     print(client.note("cron-jobs-prod")["plain_body"])
+    created = client.create(title="Deploy log")
+    print(created["filename"])  # server-derived from the title
 
 All methods raise freshjots.ApiError on non-2xx, with the code/status/details
 from the API's stable error envelope.
+
+Response shapes: GET /notes is the only endpoint that wraps its payload
+({"notes": [...]}). show / show-by-filename / create return the note dict
+at the TOP LEVEL — there is no {"note": ...} wrapper.
 """
 
 import json
@@ -18,7 +24,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 DEFAULT_BASE_URL = "https://freshjots.com/api/v1"
 
 __all__ = ["Client", "ApiError", "__version__"]
@@ -44,16 +50,29 @@ class Client:
         return self._request("GET", "/notes")["notes"]
 
     def note(self, filename):
-        """Fetch one note by its filename. Returns the full note dict."""
-        path = f"/notes/by-filename/{urllib.parse.quote(filename, safe='')}"
-        return self._request("GET", path)["note"]
+        """Fetch one note by its filename. Returns the full note dict.
 
-    def create(self, filename, body="", title=None):
-        """Create a new note. Errors if `filename` is already in use."""
-        payload = {"note": {"filename": filename, "plain_body": body, "format": "plain"}}
-        if title:
-            payload["note"]["title"] = title
-        return self._request("POST", "/notes", payload)["note"]
+        show-by-filename renders the serializer at the top level (no
+        {"note": ...} wrapper), so the response *is* the note.
+        """
+        path = f"/notes/by-filename/{urllib.parse.quote(filename, safe='')}"
+        return self._request("GET", path)
+
+    def create(self, title, body=""):
+        """Create a note. The API permits note[title, plain_body, format,
+        ...] — NOT filename: the server DERIVES the filename from the
+        title. For a note addressable by an exact, caller-chosen
+        filename, use append() (the by-filename endpoint creates it with
+        that exact name on first call). Returns the created note (top
+        level); read ["filename"] for the server-derived stream name.
+        """
+        if not title:
+            raise ValueError(
+                "create requires a title — the API derives the filename from it. "
+                "For a note addressable by an exact filename, use append()."
+            )
+        payload = {"note": {"title": title, "plain_body": body, "format": "plain"}}
+        return self._request("POST", "/notes", payload)
 
     def append(self, filename, text):
         """Append text to a note. Creates the note if it doesn't exist yet."""
