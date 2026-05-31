@@ -20,8 +20,8 @@ def stub(client, monkeypatch, return_value):
     return calls
 
 
-def test_version_is_pinned_to_0_2_0():
-    assert __version__ == "0.2.0"
+def test_version_is_pinned_to_1_0_1():
+    assert __version__ == "1.0.1"
 
 
 def test_client_requires_a_token(monkeypatch):

@@ -24,7 +24,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-__version__ = "0.2.0"
+__version__ = "1.0.1"
 DEFAULT_BASE_URL = "https://freshjots.com/api/v1"
 
 __all__ = ["Client", "ApiError", "__version__"]
