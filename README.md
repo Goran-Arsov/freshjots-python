@@ -60,8 +60,8 @@ Stable error codes: `unauthenticated`, `forbidden`, `not_found`,
 
 ## Auth
 
-Mint a token at <https://freshjots.com/settings/api_tokens> (Dev or
-Dev-pro tier required). Set it once:
+Mint a token at <https://freshjots.com/settings/api_tokens> (Pro or
+Team tier required). Set it once:
 
 ```sh
 export FRESHJOTS_TOKEN=<your-token>
