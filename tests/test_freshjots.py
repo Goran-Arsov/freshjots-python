@@ -37,8 +37,8 @@ def route(client, monkeypatch, by_path, default=None):
     return calls
 
 
-def test_version_is_pinned_to_1_1_0():
-    assert __version__ == "1.1.0"
+def test_version_is_pinned_to_1_1_1():
+    assert __version__ == "1.1.1"
 
 
 def test_client_requires_a_token(monkeypatch):
