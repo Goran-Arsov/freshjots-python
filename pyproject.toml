@@ -19,6 +19,12 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
+# The core client is dependency-free (stdlib only). Client-side encryption
+# (encrypt/decrypt) needs AES-GCM, which the stdlib lacks, so it is an opt-in
+# extra: `pip install freshjots[encryption]`.
+[project.optional-dependencies]
+encryption = ["cryptography>=3.4.8"]
+
 [project.urls]
 Homepage      = "https://github.com/Goran-Arsov/freshjots-python"
 Documentation = "https://freshjots.com/docs"
