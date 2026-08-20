@@ -22,6 +22,9 @@ Response shapes: GET /notes and GET /folders wrap their payloads
 returns the object at the TOP LEVEL — there is no {"note": ...} wrapper.
 """
 
+import base64
+import hashlib
+import hmac
 import json
 import os
 import urllib.error
@@ -31,7 +34,7 @@ import urllib.request
 __version__ = "1.1.1"
 DEFAULT_BASE_URL = "https://freshjots.com/api/v1"
 
-__all__ = ["Client", "ApiError", "__version__"]
+__all__ = ["Client", "ApiError", "encrypt", "decrypt", "is_encrypted", "__version__"]
 
 # Fields update()/set() may change (mirrors the bash CLI). append_only and
 # format are intentionally excluded — the API does not allow updating them.
@@ -106,21 +109,34 @@ class Client:
 
     # ---- writing -------------------------------------------------------
 
-    def create(self, title, body=""):
+    def create(self, title, body="", client_encrypted=False):
         """Create a note by title (the server derives the filename). For a
-        note addressable by an exact filename, use append() instead."""
+        note addressable by an exact filename, use append() instead.
+
+        Pass client_encrypted=True to mark the note as a client-encrypted note
+        — body is opaque ciphertext you produced with encrypt(); the server
+        stores it verbatim and never reads it. Personal accounts only."""
         if not title:
             raise ValueError(
                 "create requires a title — the API derives the filename from it. "
                 "For a note addressable by an exact filename, use append()."
             )
-        payload = {"note": {"title": title, "plain_body": body, "format": "plain"}}
-        return self._request("POST", "/notes", payload)
+        note = {"title": title, "plain_body": body, "format": "plain"}
+        if client_encrypted:
+            note["client_encrypted"] = True
+        return self._request("POST", "/notes", {"note": note})
 
-    def append(self, filename, text):
-        """Append text to a note. Creates the note if it doesn't exist yet."""
+    def append(self, filename, text, client_encrypted=False):
+        """Append text to a note. Creates the note if it doesn't exist yet.
+
+        On first-touch creation, pass client_encrypted=True to open the stream
+        as a client-encrypted note (send one ciphertext line per append).
+        Ignored once the note exists."""
         path = f"/notes/by-filename/{self._escape(filename)}/append"
-        self._request("POST", path, {"text": text})
+        body = {"text": text}
+        if client_encrypted:
+            body["client_encrypted"] = True
+        self._request("POST", path, body)
         return True
 
     def update(self, id, **fields):
@@ -306,3 +322,107 @@ class Client:
                 message=err.get("message", "request failed"),
                 details=err.get("details"),
             ) from e
+
+
+# ---- client-side encryption (format "fj1") -----------------------------------
+#
+# Encrypt locally with your own passphrase; the server stores only the
+# ciphertext and can never read it. Wire format:
+#
+#     "fj1:" + base64( salt[16] | iv[16] | ciphertext | mac[32] )
+#
+# A single PBKDF2-HMAC-SHA256 pass (210000 iterations) derives 64 bytes from the
+# passphrase and salt: the first 32 are the AES-256-CBC key, the last 32 the
+# HMAC-SHA256 key. The note is AES-256-CBC encrypted, then authenticated
+# encrypt-then-MAC over iv|ciphertext; decryption verifies the MAC before
+# decrypting. The output is a single line (base64 has no newlines), so it
+# survives the server's newline append separator — encrypt each append as its
+# own line and they decrypt independently. The format is identical across the
+# Fresh Jots JS, Python, Ruby, and shell clients: a note encrypted by one
+# decrypts with the others. (CBC+HMAC, not GCM, because it is the one
+# authenticated construction every client — including the bash CLI, whose
+# openssl refuses AEAD — can implement identically.)
+#
+# AES is not in the Python standard library, so encryption needs the
+# `cryptography` package. It is kept an OPTIONAL extra so the core client stays
+# dependency-free: install it with `pip install freshjots[encryption]`.
+
+_FJ_PREFIX = "fj1:"
+_FJ_ITERATIONS = 210000
+_FJ_SALT_LEN = 16
+_FJ_IV_LEN = 16
+_FJ_MAC_LEN = 32
+
+
+def _fj_cipher():
+    """Return (Cipher, algorithms, modes, padding) from `cryptography`, or raise
+    a helpful error if it is not installed."""
+    try:
+        from cryptography.hazmat.primitives import padding
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    except ImportError as e:
+        raise RuntimeError(
+            "encryption needs the 'cryptography' package — "
+            "install it with: pip install freshjots[encryption]"
+        ) from e
+    return Cipher, algorithms, modes, padding
+
+
+def _fj_derive_keys(passphrase, salt):
+    dk = hashlib.pbkdf2_hmac("sha256", passphrase.encode("utf-8"), salt, _FJ_ITERATIONS, 64)
+    return dk[:32], dk[32:]
+
+
+def is_encrypted(text):
+    """True if text carries the Fresh Jots ciphertext prefix ('fj1:'). A
+    declaration of shape, not a guarantee it decrypts."""
+    return isinstance(text, str) and text.startswith(_FJ_PREFIX)
+
+
+def encrypt(plaintext, passphrase):
+    """Encrypt a string with a passphrase; return an 'fj1:' token."""
+    if not passphrase:
+        raise ValueError("encrypt requires a passphrase")
+    cipher_cls, algorithms, modes, padding = _fj_cipher()
+    salt = os.urandom(_FJ_SALT_LEN)
+    iv = os.urandom(_FJ_IV_LEN)
+    enc_key, mac_key = _fj_derive_keys(passphrase, salt)
+    padder = padding.PKCS7(128).padder()
+    padded = padder.update(plaintext.encode("utf-8")) + padder.finalize()
+    encryptor = cipher_cls(algorithms.AES(enc_key), modes.CBC(iv)).encryptor()
+    ciphertext = encryptor.update(padded) + encryptor.finalize()
+    mac = hmac.new(mac_key, iv + ciphertext, hashlib.sha256).digest()
+    return _FJ_PREFIX + base64.b64encode(salt + iv + ciphertext + mac).decode("ascii")
+
+
+def decrypt(token, passphrase):
+    """Decrypt an 'fj1:' token back to its plaintext. Raises ValueError on a
+    malformed token, a wrong passphrase, or tampering."""
+    if not passphrase:
+        raise ValueError("decrypt requires a passphrase")
+    if not is_encrypted(token):
+        raise ValueError("not a Fresh Jots ciphertext (missing 'fj1:' prefix)")
+    cipher_cls, algorithms, modes, padding = _fj_cipher()
+    try:
+        blob = base64.b64decode(token[len(_FJ_PREFIX):])
+    except Exception as e:
+        raise ValueError("ciphertext is not valid base64") from e
+    if len(blob) < _FJ_SALT_LEN + _FJ_IV_LEN + _FJ_MAC_LEN + 16:
+        raise ValueError("ciphertext is truncated or corrupted")
+    salt = blob[:_FJ_SALT_LEN]
+    iv = blob[_FJ_SALT_LEN:_FJ_SALT_LEN + _FJ_IV_LEN]
+    mac = blob[-_FJ_MAC_LEN:]
+    ciphertext = blob[_FJ_SALT_LEN + _FJ_IV_LEN:-_FJ_MAC_LEN]
+    enc_key, mac_key = _fj_derive_keys(passphrase, salt)
+    expected = hmac.new(mac_key, iv + ciphertext, hashlib.sha256).digest()
+    if not hmac.compare_digest(mac, expected):
+        raise ValueError("decryption failed — wrong passphrase or corrupted ciphertext")
+    decryptor = cipher_cls(algorithms.AES(enc_key), modes.CBC(iv)).decryptor()
+    try:
+        padded = decryptor.update(ciphertext) + decryptor.finalize()
+        unpadder = padding.PKCS7(128).unpadder()
+        return (unpadder.update(padded) + unpadder.finalize()).decode("utf-8")
+    except Exception as e:
+        raise ValueError(
+            "decryption failed — wrong passphrase or corrupted ciphertext"
+        ) from e

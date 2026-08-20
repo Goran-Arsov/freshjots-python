@@ -1,7 +1,8 @@
 # freshjots — Python
 
 Tiny Python client for the [Fresh Jots](https://freshjots.com) API. One
-file, no runtime dependencies (uses `urllib` from stdlib).
+file, no runtime dependencies for the core client (uses `urllib` from
+stdlib). Client-side [encryption](#encryption) is an optional extra.
 
 ## Install
 
@@ -52,10 +53,41 @@ for f in client.folders():
 The method surface mirrors the bash CLI:
 
 - **Reading:** `notes(sort=, folder_id=, limit=, offset=, all_pages=)`, `note(filename)`, `note_by_id(id)`
-- **Writing:** `create(title, body=)`, `append(filename, text)`, `update(id, **fields)`, `set(filename, **fields)`, `bulk(notes)`
+- **Writing:** `create(title, body=, client_encrypted=)`, `append(filename, text, client_encrypted=)`, `update(id, **fields)`, `set(filename, **fields)`, `bulk(notes)`
 - **Organizing:** `move(id_or_filename, folder=)`, `delete(id_or_filename)`, `folders()`, `folder(id)`, `create_folder(name)`, `rename_folder(id, name)`, `delete_folder(id)`
 
 `note`/`note_by_id`/`create`/`update`/`set` return the note dict directly (no `{"note": …}` wrapper); `notes()` and `folders()` return lists. `update`/`set` accept any of `title`, `body`, `folder`, `root=True`, `deadline`, `alert_email`, `webhook_url`, `webhook_secret` — and because a content change rewrites the body as a unit, a `title` change must also pass `body`. `move`/`delete` accept a numeric id or a filename; `move`'s `folder` may be an id, a folder name, or `None`/`"none"`/`"root"` for the root.
+
+## Encryption
+
+Keep notes the server can't read: encrypt locally with your own passphrase,
+store the ciphertext, decrypt locally on read. AES isn't in the standard
+library, so this needs the optional extra:
+
+```sh
+pip install freshjots[encryption]
+```
+
+```python
+import os
+from freshjots import Client, encrypt, decrypt
+
+client = Client()
+pw = os.environ["FRESHJOTS_PASSPHRASE"]
+
+# Store an encrypted note: encrypt the body, flag it client_encrypted.
+client.create(title="Recovery codes", body=encrypt("1234-5678", pw), client_encrypted=True)
+
+# Read it back and decrypt locally.
+print(decrypt(client.note("recovery-codes")["plain_body"], pw))
+```
+
+The format (`fj1`: AES-256-CBC + HMAC-SHA256, PBKDF2-HMAC-SHA256) is
+interoperable with the JS, Ruby, MCP, and shell (`brew`) clients. You hold the only key — Fresh Jots never receives it and
+**cannot recover the note if you lose it**, so back the passphrase up somewhere
+safe. Encryption is per-note and personal-only (not team notes); the title and
+metadata stay in the clear, so keep secrets out of the title. `decrypt` raises
+`ValueError` on a wrong passphrase. See <https://freshjots.com/encrypted-notes>.
 
 ## Errors
 
