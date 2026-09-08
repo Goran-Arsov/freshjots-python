@@ -172,8 +172,9 @@ class Client:
     # ---- organizing ----------------------------------------------------
 
     def delete(self, id_or_filename):
-        """Delete a note by id or filename. Locked (append-only) notes are
-        refused by the API. Returns True."""
+        """Delete a note by id or filename. Works on any note, including
+        locked (append-only) ones — the lock freezes content, not
+        deletability. Returns True."""
         self._request("DELETE", f"/notes/{self._resolve_note_id(id_or_filename)}")
         return True
 
